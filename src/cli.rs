@@ -34,7 +34,10 @@ fn validate_url(s: &str) -> Result<String, String> {
     let has_domain = host.contains('.');
 
     if !is_localhost && !has_domain {
-        return Err(format!("Invalid URL: '{}' - must be a valid domain or localhost", s));
+        return Err(format!(
+            "Invalid URL: '{}' - must be a valid domain or localhost",
+            s
+        ));
     }
 
     if has_port {
