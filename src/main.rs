@@ -1,8 +1,10 @@
 use anyhow::Result;
 use clap::Parser;
+use std::path::PathBuf;
 
 mod analyzer;
 mod cli;
+mod fuzzer;
 mod http;
 mod models;
 mod reporter;
@@ -12,8 +14,6 @@ use cli::{Cli, Commands};
 use models::{Role, RoleConfig};
 use reporter::{ConsoleReporter, HtmlExporter, JsonExporter};
 use scanner::{EndpointParser, FuzzerScanner, OpenApiParser, Scanner, print_fuzz_results};
-
-mod fuzzer;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -38,6 +38,9 @@ async fn main() -> Result<()> {
             skip_paths,
             public_paths,
         } => {
+            if spec.is_none() && endpoints.is_none() {
+                anyhow::bail!("Either --spec or --endpoints must be provided");
+            }
             run_scan(
                 url,
                 spec,
@@ -79,6 +82,9 @@ async fn main() -> Result<()> {
             params,
             verbose,
         } => {
+            if spec.is_none() && endpoints.is_none() {
+                anyhow::bail!("Either --spec or --endpoints must be provided");
+            }
             run_fuzz(
                 url,
                 spec,
@@ -100,7 +106,7 @@ async fn main() -> Result<()> {
 #[allow(clippy::too_many_arguments)]
 async fn run_scan(
     url: String,
-    spec: Option<String>,
+    spec: Option<PathBuf>,
     endpoints_arg: Option<String>,
     admin: String,
     user: String,
@@ -112,7 +118,7 @@ async fn run_scan(
     ignore: Option<String>,
     verbose: bool,
     params: Option<String>,
-    bodies: Option<String>,
+    bodies: Option<PathBuf>,
     skip_paths: Option<String>,
     public_paths: Option<String>,
 ) -> Result<()> {
@@ -124,7 +130,7 @@ async fn run_scan(
     let mut endpoints = match (&spec, &endpoints_arg) {
         (Some(spec_path), _) => {
             let parser = OpenApiParser::new();
-            parser.parse_file(spec_path)?
+            parser.parse_file(spec_path.to_str().unwrap())?
         }
         (None, Some(ep_str)) => EndpointParser::parse(ep_str)?,
         (None, None) => {
@@ -158,7 +164,7 @@ async fn run_scan(
 
     let path_params = params.map(|p| parse_params(&p)).unwrap_or_default();
     let request_bodies = bodies
-        .map(|b| load_bodies(&b))
+        .map(|b| load_bodies(b.to_str().unwrap()))
         .transpose()?
         .unwrap_or_default();
     let ignore_fields = ignore.map(|i| parse_ignore(&i)).unwrap_or_default();
@@ -188,8 +194,8 @@ async fn run_scan(
     Ok(())
 }
 
-fn run_report(input: String, format: String, output: Option<String>) -> Result<()> {
-    let results = JsonExporter::load(&input)?;
+fn run_report(input: PathBuf, format: String, output: Option<String>) -> Result<()> {
+    let results = JsonExporter::load(input.to_str().unwrap())?;
 
     match format.as_str() {
         "html" => {
@@ -203,18 +209,19 @@ fn run_report(input: String, format: String, output: Option<String>) -> Result<(
             println!("JSON report generated: {}", output_path);
         }
         _ => {
-            anyhow::bail!("Unsupported format: {}. Use 'html' or 'json'", format);
+            anyhow::bail!("Unsupported format: '{}'. Use 'html' or 'json'", format);
         }
     }
 
     Ok(())
 }
 
-fn run_parse(spec: String) -> Result<()> {
+fn run_parse(spec: PathBuf) -> Result<()> {
     let parser = OpenApiParser::new();
-    let endpoints = parser.parse_file(&spec)?;
+    let spec_str = spec.to_str().unwrap();
+    let endpoints = parser.parse_file(spec_str)?;
 
-    println!("Parsed {} endpoints from {}\n", endpoints.len(), spec);
+    println!("Parsed {} endpoints from {}\n", endpoints.len(), spec_str);
 
     for ep in &endpoints {
         println!("  {} {}", ep.method, ep.path);
@@ -258,7 +265,7 @@ fn parse_path_list(input: &str) -> Vec<String> {
 #[allow(clippy::too_many_arguments)]
 async fn run_fuzz(
     url: String,
-    spec: Option<String>,
+    spec: Option<PathBuf>,
     endpoints_arg: Option<String>,
     user: String,
     header: String,
@@ -270,7 +277,7 @@ async fn run_fuzz(
     let endpoints = match (&spec, &endpoints_arg) {
         (Some(spec_path), _) => {
             let parser = OpenApiParser::new();
-            parser.parse_file(spec_path)?
+            parser.parse_file(spec_path.to_str().unwrap())?
         }
         (None, Some(ep_str)) => EndpointParser::parse(ep_str)?,
         (None, None) => {
